@@ -1,90 +1,294 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Downloading your data...</title>
-    <style>
-        body {
-            background-color: black;
-            color: limegreen;
-            font-family: monospace;
-            padding: 20px;
-        }
-        #progress-container {
-            width: 100%;
-            background-color: #222;
-            border: 1px solid limegreen;
-            height: 25px;
-            margin: 20px 0;
-        }
-        #progress-bar {
-            width: 0%;
-            height: 100%;
-            background-color: limegreen;
-            transition: width 0.2s;
-        }
-        .blink {
-            animation: blink 1s step-start infinite;
-        }
-        @keyframes blink {
-            50% { opacity: 0; }
-        }
-        #final-message {
-            font-size: 1.5em;
-            color: red;
-            display: none;
-            margin-top: 30px;
-        }
-    </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
+<title>Mini Feeding Frenzy</title>
+<style>
+  html,body { margin:0; height:100%; background:#03121b; color:#dff6ff; font-family:system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+  #ui { position:fixed; inset:0 0 auto 0; display:flex; justify-content:space-between; align-items:center;
+        padding:10px 14px; background:linear-gradient(#03121bcc, #03121b00); font-weight:700; }
+  .btn { background:#0b2a3a; border:1px solid #124357; color:#dff6ff; border-radius:999px; padding:8px 12px; cursor:pointer; }
+  .btn:active { transform:scale(.98); }
+  #center { position:fixed; inset:0; display:grid; place-items:center; text-align:center; pointer-events:none; }
+  #center > div { background:rgba(0,0,0,.35); padding:18px 22px; border:1px solid #124357; border-radius:16px; }
+  canvas { display:block; width:100vw; height:100vh; }
+</style>
 </head>
 <body>
-    <h1>Downloading your data<span class="blink">...</span></h1>
-    <div id="progress-container">
-        <div id="progress-bar"></div>
+  <div id="ui">
+    <div>🐟 Size: <span id="size">1.0</span> • 🧮 Score: <span id="score">0</span> • ❤️ Lives: <span id="lives">3</span></div>
+    <div style="display:flex; gap:8px;">
+      <button id="pauseBtn" class="btn">⏸ Pause</button>
+      <button id="restartBtn" class="btn">↻ Restart</button>
     </div>
-    <pre id="console"></pre>
-    <div id="final-message">Privacy is a myth.</div>
+  </div>
+  <canvas id="c"></canvas>
+  <div id="center"><div id="msg">Click or tap to start</div></div>
 
-    <script>
-        const consoleEl = document.getElementById('console');
-        const progressBar = document.getElementById('progress-bar');
-        const finalMsg = document.getElementById('final-message');
+<script>
+(() => {
+  // --- Canvas setup ---
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  let W=0, H=0, DPR=window.devicePixelRatio||1;
+  function resize(){
+    DPR = window.devicePixelRatio||1;
+    W = canvas.width = Math.floor(window.innerWidth*DPR);
+    H = canvas.height = Math.floor(window.innerHeight*DPR);
+    canvas.style.width = window.innerWidth+'px';
+    canvas.style.height = window.innerHeight+'px';
+  }
+  window.addEventListener('resize', resize, {passive:true}); resize();
 
-        const lines = [
-            "[INFO] Connecting to target...",
-            "[INFO] Connection established.",
-            "[INFO] Scanning files...",
-            "[INFO] Extracting documents...",
-            "[INFO] Downloading photos...",
-            "[INFO] Gathering personal details...",
-            "[SUCCESS] All files retrieved."
-        ];
+  // --- UI ---
+  const scoreEl = document.getElementById('score');
+  const sizeEl  = document.getElementById('size');
+  const livesEl = document.getElementById('lives');
+  const msgBox  = document.getElementById('msg');
+  const center  = document.getElementById('center');
+  const pauseBtn= document.getElementById('pauseBtn');
+  const restartBtn=document.getElementById('restartBtn');
 
-        let i = 0;
-        let progress = 0;
+  // --- Audio (simple blip for eat, buzz for hit) ---
+  let AC, audioOn=false;
+  function primeAudio(){ if(audioOn) return; audioOn=true; try{AC = new (window.AudioContext||window.webkitAudioContext)();}catch{} }
+  function blip(f1=300, f2=550, dur=0.12){
+    if(!AC) return;
+    const o=AC.createOscillator(), g=AC.createGain();
+    o.type='sine';
+    o.frequency.setValueAtTime(f1,AC.currentTime);
+    o.frequency.linearRampToValueAtTime(f2,AC.currentTime+dur*0.6);
+    g.gain.setValueAtTime(0.0001,AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.18,AC.currentTime+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+dur);
+    o.connect(g).connect(AC.destination); o.start(); o.stop(AC.currentTime+dur);
+  }
+  function buzz(dur=0.18){
+    if(!AC) return;
+    const o=AC.createOscillator(), g=AC.createGain();
+    o.type='square';
+    o.frequency.setValueAtTime(120,AC.currentTime);
+    g.gain.setValueAtTime(0.2,AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001,AC.currentTime+dur);
+    o.connect(g).connect(AC.destination); o.start(); o.stop(AC.currentTime+dur);
+  }
 
-        function updateProgress() {
-            if (progress < 100) {
-                progress += Math.floor(Math.random() * 10) + 5;
-                if (progress > 100) progress = 100;
-                progressBar.style.width = progress + "%";
-                setTimeout(updateProgress, 300);
-            }
+  // --- Game state ---
+  const state = {
+    playing:false, paused:false, over:false,
+    score:0, size:1, lives:3,
+    player:{ x:W*0.3, y:H*0.5, r:26, spd:3.0, dir:1 },
+    target:{ x:W*0.3, y:H*0.5 },
+    fish:[],  // NPCs
+    t:0,
+  };
+
+  // --- Controls (mouse/touch/keyboard) ---
+  function setTargetFromEvent(e){
+    primeAudio();
+    if(e.touches && e.touches.length){
+      state.target.x = e.touches[0].clientX*DPR;
+      state.target.y = e.touches[0].clientY*DPR;
+    } else {
+      state.target.x = e.clientX*DPR;
+      state.target.y = e.clientY*DPR;
+    }
+  }
+  canvas.addEventListener('mousemove', setTargetFromEvent);
+  canvas.addEventListener('mousedown', e=>{ setTargetFromEvent(e); startIfNeeded(); });
+  canvas.addEventListener('touchstart', e=>{ setTargetFromEvent(e); startIfNeeded(); }, {passive:false});
+  canvas.addEventListener('touchmove', e=>{ setTargetFromEvent(e); }, {passive:false});
+  // Keyboard arrows / WASD
+  const keys = {};
+  window.addEventListener('keydown', e=>{ keys[e.key.toLowerCase()]=true; startIfNeeded(); });
+  window.addEventListener('keyup',   e=>{ keys[e.key.toLowerCase()]=false; });
+
+  pauseBtn.onclick = ()=>{
+    if(!state.playing || state.over) return;
+    state.paused = !state.paused;
+    pauseBtn.textContent = state.paused ? '▶ Resume' : '⏸ Pause';
+    center.style.display = state.paused ? 'grid' : 'none';
+    msgBox.textContent = state.paused ? 'Paused' : '';
+  };
+  restartBtn.onclick = ()=> reset(true);
+
+  function startIfNeeded(){
+    if(!state.playing){
+      state.playing = true; center.style.display='none';
+    }
+  }
+
+  // --- NPC fish factory ---
+  function spawnFish(){
+    // size bucket around player: some smaller, some larger
+    const pr = state.player.r;
+    const small = Math.random()<0.65;
+    const r = small ? pr*(0.4 + Math.random()*0.45) : pr*(1.15 + Math.random()*0.9);
+    // spawn from left or right
+    const fromLeft = Math.random()<0.5;
+    const y = (H*0.15 + Math.random()*H*0.7);
+    const x = fromLeft ? -r*2 : W + r*2;
+    const dir = fromLeft ? 1 : -1;
+    const base = 0.6 + Math.random()*0.8;
+    const spd = (2.0 + base*(small?1.2:0.9)) * DPR;
+    const hue = small ? (180+Math.floor(Math.random()*120)) : (20+Math.floor(Math.random()*40));
+    state.fish.push({x,y,r,dir,spd,hue,wob:Math.random()*Math.PI*2});
+  }
+
+  function reset(hard=false){
+    state.score=0; state.size=1; state.lives=3; state.over=false;
+    scoreEl.textContent = 0; sizeEl.textContent = state.size.toFixed(1); livesEl.textContent = state.lives;
+    state.player.r=26; state.player.x=W*0.3; state.player.y=H*0.5; state.player.dir=1;
+    state.fish.length=0; state.t=0; state.paused=false; pauseBtn.textContent='⏸ Pause';
+    for(let i=0;i<10;i++) spawnFish();
+    if(hard){ state.playing=true; center.style.display='none'; }
+  }
+  reset(false); // show start screen
+
+  // --- Helpers ---
+  function clamp(v,min,max){ return v<min?min : v>max?max : v; }
+
+  // --- Drawing helpers ---
+  function drawFish(x,y,r,dir,hue){
+    // body
+    ctx.fillStyle = `hsl(${hue} 80% 55%)`;
+    ctx.beginPath();
+    ctx.ellipse(x, y, r*1.1, r*0.7, 0, 0, Math.PI*2);
+    ctx.fill();
+    // tail
+    ctx.beginPath();
+    ctx.moveTo(x - dir*r*1.2, y);
+    ctx.lineTo(x - dir*r*1.8, y - r*0.6);
+    ctx.lineTo(x - dir*r*1.8, y + r*0.6);
+    ctx.closePath();
+    ctx.fill();
+    // eye
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(x + dir*r*0.6, y - r*0.15, r*0.18, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.arc(x + dir*r*0.64, y - r*0.15, r*0.09, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  function drawBG(t){
+    // subtle water gradient + bubbles
+    const g=ctx.createLinearGradient(0,0,0,H);
+    g.addColorStop(0,'#032235');
+    g.addColorStop(1,'#02161f');
+    ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+
+    // drifting light beams
+    ctx.globalAlpha = 0.06;
+    ctx.fillStyle = '#9be8ff';
+    for(let i=0;i<4;i++){
+      const w = (0.08 + i*0.03)*W;
+      const x = (Math.sin(t*0.0004 + i)*0.3 + 0.5) * (W-w);
+      ctx.fillRect(x,0,w,H);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // --- Game loop ---
+  let last=0;
+  function loop(ts){
+    requestAnimationFrame(loop);
+    if(!state.playing || state.paused || state.over){ return; }
+    const dt = Math.min(33, ts-last||16); last=ts; state.t+=dt;
+
+    drawBG(state.t);
+
+    // Spawn NPC fish
+    if(state.fish.length<22 && Math.random()<0.04) spawnFish();
+
+    // Move player towards target or via keys
+    const p=state.player, speed = p.spd*DPR*(1 + Math.min(1,(p.r-26)/80));
+    let tx = state.target.x || p.x, ty = state.target.y || p.y;
+
+    if(keys['arrowup']||keys['w']) ty -= 140*DPR;
+    if(keys['arrowdown']||keys['s']) ty += 140*DPR;
+    if(keys['arrowleft']||keys['a']) tx -= 140*DPR;
+    if(keys['arrowright']||keys['d']) tx += 140*DPR;
+
+    const dx = tx - p.x, dy = ty - p.y;
+    const dist = Math.hypot(dx,dy);
+    if(dist>1){ p.x += dx/dist*speed; p.y += dy/dist*speed; }
+    p.x = clamp(p.x, p.r*2, W - p.r*2);
+    p.y = clamp(p.y, p.r*1.4, H - p.r*1.4);
+    p.dir = dx>=0 ? 1 : -1;
+
+    // Update & draw NPC fish
+    for(let i=state.fish.length-1;i>=0;i--){
+      const f=state.fish[i];
+      f.x += f.dir*f.spd;
+      f.wob += 0.03;
+      f.y += Math.sin(f.wob)*0.8*DPR;
+      // off-screen cleanup
+      if( (f.dir>0 && f.x - f.r*2 > W) || (f.dir<0 && f.x + f.r*2 < 0) ){
+        state.fish.splice(i,1); continue;
+      }
+      // draw
+      drawFish(f.x, f.y, f.r, f.dir, f.hue);
+    }
+
+    // Draw player last (on top)
+    drawFish(p.x, p.y, p.r, p.dir, 200);
+
+    // Collisions
+    for(let i=state.fish.length-1;i>=0;i--){
+      const f=state.fish[i];
+      const d = Math.hypot(f.x - p.x, f.y - p.y);
+      if(d < f.r + p.r*0.75){
+        if(f.r < p.r*0.95){ // eat
+          state.fish.splice(i,1);
+          state.score += Math.max(1, Math.round(5*(p.r/f.r)));
+          scoreEl.textContent = state.score;
+          p.r = Math.min(120, p.r + Math.max(2, f.r*0.12)); // grow
+          state.size = (p.r/26).toFixed(1);
+          sizeEl.textContent = state.size;
+          blip();
+        } else { // hit by bigger fish
+          state.lives--;
+          livesEl.textContent = state.lives;
+          buzz();
+          // brief knockback
+          p.x -= p.dir*30*DPR;
+          if(state.lives<=0){
+            gameOver();
+            return;
+          }
+          // shrink a bit as penalty
+          p.r = Math.max(22, p.r*0.9);
         }
+      }
+    }
 
-        function typeLine() {
-            if (i < lines.length) {
-                consoleEl.textContent += lines[i] + "\n";
-                i++;
-                setTimeout(typeLine, 1000);
-            } else {
-                document.title = "✅ Download Successful";
-                finalMsg.style.display = "block";
-            }
-        }
+    // gentle drift when no input target set
+    if(!state.target.x){ state.target.x = p.x; state.target.y = p.y; }
+  }
 
-        updateProgress();
-        typeLine();
-    </script>
+  function gameOver(){
+    state.over = true; state.playing=false;
+    center.style.display='grid';
+    msgBox.innerHTML = `Game Over<br>Final Score: <b>${state.score}</b><br><small>Tap or press ↻ Restart</small>`;
+  }
+
+  // Start loop
+  requestAnimationFrame(loop);
+
+  // Start prompt
+  center.style.display='grid';
+  msgBox.textContent = 'Click or tap to start';
+
+  // Restart helper
+  window.addEventListener('keydown', e=>{
+    if(state.over && (e.key==='Enter' || e.key===' ')){ reset(true); }
+  });
+
+})();
+</script>
 </body>
 </html>
