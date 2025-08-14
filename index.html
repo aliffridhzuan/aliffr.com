@@ -2,9 +2,89 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Privacy is a myth!</title>
+    <title>Downloading your data...</title>
+    <style>
+        body {
+            background-color: black;
+            color: limegreen;
+            font-family: monospace;
+            padding: 20px;
+        }
+        #progress-container {
+            width: 100%;
+            background-color: #222;
+            border: 1px solid limegreen;
+            height: 25px;
+            margin: 20px 0;
+        }
+        #progress-bar {
+            width: 0%;
+            height: 100%;
+            background-color: limegreen;
+            transition: width 0.2s;
+        }
+        .blink {
+            animation: blink 1s step-start infinite;
+        }
+        @keyframes blink {
+            50% { opacity: 0; }
+        }
+        #final-message {
+            font-size: 1.5em;
+            color: red;
+            display: none;
+            margin-top: 30px;
+        }
+    </style>
 </head>
 <body>
-    <h1>Privacy is a myth!</h1>
+    <h1>Downloading your data<span class="blink">...</span></h1>
+    <div id="progress-container">
+        <div id="progress-bar"></div>
+    </div>
+    <pre id="console"></pre>
+    <div id="final-message">Privacy is a myth.</div>
+
+    <script>
+        const consoleEl = document.getElementById('console');
+        const progressBar = document.getElementById('progress-bar');
+        const finalMsg = document.getElementById('final-message');
+
+        const lines = [
+            "[INFO] Connecting to target...",
+            "[INFO] Connection established.",
+            "[INFO] Scanning files...",
+            "[INFO] Extracting documents...",
+            "[INFO] Downloading photos...",
+            "[INFO] Gathering personal details...",
+            "[SUCCESS] All files retrieved."
+        ];
+
+        let i = 0;
+        let progress = 0;
+
+        function updateProgress() {
+            if (progress < 100) {
+                progress += Math.floor(Math.random() * 10) + 5;
+                if (progress > 100) progress = 100;
+                progressBar.style.width = progress + "%";
+                setTimeout(updateProgress, 300);
+            }
+        }
+
+        function typeLine() {
+            if (i < lines.length) {
+                consoleEl.textContent += lines[i] + "\n";
+                i++;
+                setTimeout(typeLine, 1000);
+            } else {
+                document.title = "✅ Download Successful";
+                finalMsg.style.display = "block";
+            }
+        }
+
+        updateProgress();
+        typeLine();
+    </script>
 </body>
 </html>
